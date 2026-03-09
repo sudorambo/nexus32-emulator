@@ -70,19 +70,10 @@ static void run_headless(nexus32_mem_t *mem, const rom_meta_t *meta)
 }
 #else
 #include "platform/vulkan_init.h"
+#include "debug/debug_ui.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stddef.h>
-
-static void debug_dump_cpu(const cpu_state_t *cpu, nexus32_mem_t *mem)
-{
-	char buf[128];
-	uint32_t insn = mem_read32(mem, cpu->pc);
-	disasm_instruction(insn, cpu->pc, buf, sizeof(buf));
-	fprintf(stderr, "[F12] PC=0x%08X SR=0x%08X | %s\n", (unsigned)cpu->pc, (unsigned)cpu->sr, buf);
-	fprintf(stderr, "      r2=0x%08X r3=0x%08X r29=0x%08X r30=0x%08X r31=0x%08X\n",
-		(unsigned)cpu->r[2], (unsigned)cpu->r[3], (unsigned)cpu->r[29], (unsigned)cpu->r[30], (unsigned)cpu->r[31]);
-}
 
 static int run_windowed(nexus32_mem_t *mem, const rom_meta_t *meta, const char *rom_path)
 {
@@ -92,7 +83,10 @@ static int run_windowed(nexus32_mem_t *mem, const rom_meta_t *meta, const char *
 		fprintf(stderr, "nxemu: failed to init Vulkan/window\n");
 		return -1;
 	}
-	input_init();
+		input_init();
+
+	static int window_raised;
+	window_raised = 0;
 
 	cpu_state_t cpu;
 	cpu_init(&cpu);
@@ -106,7 +100,7 @@ static int run_windowed(nexus32_mem_t *mem, const rom_meta_t *meta, const char *
 			if (e.type == SDL_QUIT) quit = 1;
 			if (e.type == SDL_KEYDOWN) {
 				if (e.key.keysym.sym == SDLK_ESCAPE) quit = 1;
-				if (e.key.keysym.sym == SDLK_F12) debug_dump_cpu(&cpu, mem);
+				if (e.key.keysym.sym == SDLK_F12) debug_overlay_visible = !debug_overlay_visible;
 			}
 		}
 		if (quit) break;
@@ -118,22 +112,62 @@ static int run_windowed(nexus32_mem_t *mem, const rom_meta_t *meta, const char *
 		cpu_run(&cpu, mem, meta->cycle_budget, &cycles_used);
 		mem_set_cycles(mem, cycles_used, meta->cycle_budget);
 
+		/* Always present a frame so the window stays visible and can receive input (e.g. F12). */
 		uint32_t gpu_ctrl = mem_read32(mem, GPU_CONTROL_ADDR);
+		float r = 0.12f, g = 0.12f, b = 0.18f, a = 1.0f;
 		if (gpu_ctrl & 1) {
 			uint32_t cb_size = mem_read32(mem, GPU_CB_SIZE_ADDR);
 			if (cb_size > 0x200000u) cb_size = 0x200000u;
 			gpu_frame_state_t gpu_state;
 			gpu_process_command_buffer(mem, GPU_CB_BASE, cb_size, &gpu_state);
-			if (gpu_state.present && vulkan_begin_frame()) {
-				float r = gpu_state.clear_color ? gpu_state.clear_r : 0.15f;
-				float g = gpu_state.clear_color ? gpu_state.clear_g : 0.15f;
-				float b = gpu_state.clear_color ? gpu_state.clear_b : 0.2f;
-				float a = gpu_state.clear_color ? gpu_state.clear_a : 1.0f;
-				vulkan_clear_screen(r, g, b, a);
-				vulkan_end_frame();
-				save_flush(rom_path, mem);
+			if (gpu_state.clear_color) {
+				r = gpu_state.clear_r;
+				g = gpu_state.clear_g;
+				b = gpu_state.clear_b;
+				a = gpu_state.clear_a;
 			}
 			mem_write32(mem, GPU_CONTROL_ADDR, 0);
+		}
+		if (vulkan_begin_frame()) {
+			if (!window_raised) {
+				vulkan_raise_window();
+				window_raised = 1;
+			}
+			/* Dim background when overlay is on so F12 is visibly doing something even if overlay draw fails. */
+			if (debug_overlay_visible) {
+				r *= 0.5f;
+				g *= 0.5f;
+				b *= 0.5f;
+			}
+			vulkan_clear_screen(r, g, b, a);
+			if (debug_overlay_visible) {
+				const void *fb = NULL;
+				int fw = 0, fh = 0;
+				if (debug_ui_frame(&cpu, mem)) {
+					debug_ui_get_framebuffer(&fb, &fw, &fh);
+				}
+				if (fb && fw > 0 && fh > 0) {
+					vulkan_draw_overlay(fb, fw, fh);
+				} else {
+					/* Fallback: draw a visible panel so F12 clearly does something (e.g. no ClearUI or overlay init failed). */
+					static uint8_t fallback_panel[128 * 128 * 4];
+					static int fallback_filled;
+					if (!fallback_filled) {
+						for (size_t i = 0; i < sizeof(fallback_panel); i += 4) {
+							fallback_panel[i + 0] = 0x28;
+							fallback_panel[i + 1] = 0x28;
+							fallback_panel[i + 2] = 0x30;
+							fallback_panel[i + 3] = 0xE0;
+						}
+						fallback_filled = 1;
+					}
+					vulkan_draw_overlay(fallback_panel, 128, 128);
+				}
+			} else {
+				vulkan_end_render_pass();
+			}
+			vulkan_end_frame();
+			save_flush(rom_path, mem);
 		}
 
 		dma_step(mem, cycles_used);

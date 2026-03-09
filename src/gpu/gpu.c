@@ -69,10 +69,13 @@ void gpu_process_command_buffer(nexus32_mem_t *mem, uint32_t cb_addr, uint32_t c
 	uint32_t off = cb_addr - GPU_CB_BASE;
 	if (off >= 0x200000u) return;
 
-	while (off + 4 <= cb_size) {
+	while (off + 4 <= cb_size && off + 4 <= (uint32_t)GPU_CB_SIZE) {
 		uint16_t cmd_type = read_u16(base + off);
 		uint16_t cmd_size = read_u16(base + off + 2);
 		if (cmd_size < 4) cmd_size = 4;
+		/* Prevent overflow and reading past buffer */
+		if (cmd_size > cb_size - off) cmd_size = (uint16_t)(cb_size - off);
+		if (off + cmd_size > (uint32_t)GPU_CB_SIZE) break;
 
 		switch (cmd_type) {
 		case CMD_CLEAR: {
