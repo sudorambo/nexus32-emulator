@@ -44,7 +44,7 @@ static void write_mem32(nexus32_mem_t *mem, uint32_t addr, uint32_t val)
 
 static int in_ram(uint32_t addr)
 {
-	return (addr >= 0x00000000u && addr < 0x02000000u)
+	return (addr < 0x02000000u)
 		|| (addr >= 0x04000000u && addr < 0x05000000u)
 		|| (addr >= 0x06000000u && addr < 0x06800000u)
 		|| (addr >= 0x08000000u && addr < 0x08010000u)

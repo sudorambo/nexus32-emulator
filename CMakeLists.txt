@@ -71,6 +71,7 @@ if(CLEARUI_FOUND)
 endif()
 
 add_executable(nxemu ${EMU_SOURCES})
+target_compile_options(nxemu PRIVATE -Wall -Wextra -Wpedantic)
 target_include_directories(nxemu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 if(CLEARUI_FOUND)
   target_compile_definitions(nxemu PRIVATE NXEMU_CLEARUI CLEARUI_EMBED_FONT)

@@ -118,8 +118,13 @@ int rom_load(const char *path, void *main_ram_base, uint32_t main_ram_size, rom_
 	uint16_t screen_width = (uint16_t)buf[44] | ((uint16_t)buf[45] << 8);
 	uint16_t screen_height = (uint16_t)buf[46] | ((uint16_t)buf[47] << 8);
 
-	if (entry_point >= main_ram_size || code_size > main_ram_size - (entry_point - 0)) {
+	if (entry_point >= main_ram_size || code_size > main_ram_size - entry_point) {
 		fprintf(stderr, "nxemu: code segment does not fit in Main RAM\n");
+		free(buf);
+		return -1;
+	}
+	if (entry_point + code_size + data_size > main_ram_size) {
+		fprintf(stderr, "nxemu: code + data segments do not fit in Main RAM\n");
 		free(buf);
 		return -1;
 	}

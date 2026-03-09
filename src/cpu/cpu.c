@@ -53,6 +53,12 @@
 #define FUNC_SLT  0x2Au
 #define FUNC_SLTU 0x2Bu
 
+#define FUNC_MUL  0x18u
+#define FUNC_MULH 0x19u
+#define FUNC_DIV  0x1Au
+#define FUNC_DIVU 0x1Bu
+#define FUNC_MOD  0x1Cu
+
 #define FUNC_SYSCALL 0x00u
 #define FUNC_BREAK   0x01u
 #define FUNC_NOP_S  0x02u
@@ -77,6 +83,19 @@ static void set_zn(cpu_state_t *cpu, uint32_t result)
 	cpu->sr &= ~(SR_Z | SR_N);
 	if (result == 0) cpu->sr |= SR_Z;
 	if ((int32_t)result < 0) cpu->sr |= SR_N;
+}
+
+#define CAUSE_OVERFLOW 0x10u
+#define CAUSE_ADDR_ALIGN 0x11u
+#define CAUSE_ILLEGAL 0x12u
+
+static void raise_exception(cpu_state_t *cpu, nexus32_mem_t *mem, uint32_t cause, uint32_t *pc_next, uint32_t *cost)
+{
+	cpu->epc = cpu->pc;
+	cpu->cause = cause;
+	cpu->sr &= ~SR_IE;
+	*pc_next = mem_read32(mem, IVT_BASE + cause * 4);
+	*cost = 4;
 }
 
 static int take_irq(cpu_state_t *cpu, nexus32_mem_t *mem, uint8_t irq_mask, uint32_t *out_cycles)
@@ -156,13 +175,31 @@ int cpu_run(cpu_state_t *cpu, nexus32_mem_t *mem, uint32_t cycle_limit, uint32_t
 				cost = 2;
 				do_rd = 0;
 				break;
-			case FUNC_ADD:
+			case FUNC_ADD: {
+				result = rs_val + rt_val;
+				if (!((rs_val ^ rt_val) & 0x80000000u) && ((result ^ rs_val) & 0x80000000u)) {
+					raise_exception(cpu, mem, CAUSE_OVERFLOW, &pc_next, &cost);
+					do_rd = 0;
+				} else {
+					set_zn(cpu, result);
+				}
+				break;
+			}
 			case FUNC_ADDU: {
 				result = rs_val + rt_val;
 				set_zn(cpu, result);
 				break;
 			}
-			case FUNC_SUB:
+			case FUNC_SUB: {
+				result = rs_val - rt_val;
+				if (((rs_val ^ rt_val) & 0x80000000u) && ((result ^ rs_val) & 0x80000000u)) {
+					raise_exception(cpu, mem, CAUSE_OVERFLOW, &pc_next, &cost);
+					do_rd = 0;
+				} else {
+					set_zn(cpu, result);
+				}
+				break;
+			}
 			case FUNC_SUBU: {
 				result = rs_val - rt_val;
 				set_zn(cpu, result);
@@ -172,6 +209,20 @@ int cpu_run(cpu_state_t *cpu, nexus32_mem_t *mem, uint32_t cycle_limit, uint32_t
 			case FUNC_OR:  result = rs_val | rt_val; set_zn(cpu, result); break;
 			case FUNC_XOR: result = rs_val ^ rt_val; set_zn(cpu, result); break;
 			case FUNC_NOR: result = ~(rs_val | rt_val); set_zn(cpu, result); break;
+			case FUNC_MUL: result = (uint32_t)((int32_t)rs_val * (int32_t)rt_val); cost = 2; break;
+			case FUNC_MULH: result = (uint32_t)(((int64_t)(int32_t)rs_val * (int64_t)(int32_t)rt_val) >> 32); cost = 2; break;
+			case FUNC_DIV:
+				if (rt_val == 0) result = 0;
+				else result = (uint32_t)((int32_t)rs_val / (int32_t)rt_val);
+				cost = 8; break;
+			case FUNC_DIVU:
+				if (rt_val == 0) result = 0;
+				else result = rs_val / rt_val;
+				cost = 8; break;
+			case FUNC_MOD:
+				if (rt_val == 0) result = 0;
+				else result = (uint32_t)((int32_t)rs_val % (int32_t)rt_val);
+				cost = 8; break;
 			case FUNC_SLT: result = ((int32_t)rs_val < (int32_t)rt_val) ? 1u : 0u; break;
 			case FUNC_SLTU: result = (rs_val < rt_val) ? 1u : 0u; break;
 			default:
@@ -196,7 +247,17 @@ int cpu_run(cpu_state_t *cpu, nexus32_mem_t *mem, uint32_t cycle_limit, uint32_t
 			pc_next = (cpu->pc & 0xF0000000u) | (target << 2);
 			cost = 2;
 		}
-		else if (op == OP_ADDIU || op == OP_ADDI) {
+		else if (op == OP_ADDI) {
+			uint32_t a = cpu->r[rs], b = (uint32_t)simm;
+			uint32_t result = a + b;
+			if (!((a ^ b) & 0x80000000u) && ((result ^ a) & 0x80000000u)) {
+				raise_exception(cpu, mem, CAUSE_OVERFLOW, &pc_next, &cost);
+			} else {
+				if (rt != 0) cpu->r[rt] = result;
+				set_zn(cpu, result);
+			}
+		}
+		else if (op == OP_ADDIU) {
 			uint32_t result = cpu->r[rs] + (uint32_t)simm;
 			if (rt != 0) cpu->r[rt] = result;
 			set_zn(cpu, result);
@@ -259,19 +320,22 @@ int cpu_run(cpu_state_t *cpu, nexus32_mem_t *mem, uint32_t cycle_limit, uint32_t
 		}
 		else if (op == OP_LW) {
 			uint32_t addr = cpu->r[rs] + (uint32_t)simm;
-			if (addr & 3) { /* unaligned: treat as no-op or trap; spec says alignment exception */
-				if (rt != 0) cpu->r[rt] = 0;
+			if (addr & 3) {
+				raise_exception(cpu, mem, CAUSE_ADDR_ALIGN, &pc_next, &cost);
 			} else {
 				uint32_t val = mem_read32(mem, addr);
 				if (rt != 0) cpu->r[rt] = val;
+				cost = 3;
 			}
-			cost = 3;
 		}
 		else if (op == OP_SW) {
 			uint32_t addr = cpu->r[rs] + (uint32_t)simm;
-			if ((addr & 3) == 0)
+			if (addr & 3) {
+				raise_exception(cpu, mem, CAUSE_ADDR_ALIGN, &pc_next, &cost);
+			} else {
 				mem_write32(mem, addr, cpu->r[rt]);
-			cost = 3;
+				cost = 3;
+			}
 		}
 		else if (op == OP_LB) {
 			uint32_t addr = cpu->r[rs] + (uint32_t)simm;
@@ -288,22 +352,22 @@ int cpu_run(cpu_state_t *cpu, nexus32_mem_t *mem, uint32_t cycle_limit, uint32_t
 		else if (op == OP_LH) {
 			uint32_t addr = cpu->r[rs] + (uint32_t)simm;
 			if (addr & 1) {
-				if (rt != 0) cpu->r[rt] = 0;
+				raise_exception(cpu, mem, CAUSE_ADDR_ALIGN, &pc_next, &cost);
 			} else {
 				int32_t v = (int32_t)(int16_t)mem_read16(mem, addr);
 				if (rt != 0) cpu->r[rt] = (uint32_t)v;
+				cost = 3;
 			}
-			cost = 3;
 		}
 		else if (op == OP_LHU) {
 			uint32_t addr = cpu->r[rs] + (uint32_t)simm;
 			if (addr & 1) {
-				if (rt != 0) cpu->r[rt] = 0;
+				raise_exception(cpu, mem, CAUSE_ADDR_ALIGN, &pc_next, &cost);
 			} else {
 				uint32_t v = mem_read16(mem, addr);
 				if (rt != 0) cpu->r[rt] = v;
+				cost = 3;
 			}
-			cost = 3;
 		}
 		else if (op == OP_SB) {
 			uint32_t addr = cpu->r[rs] + (uint32_t)simm;
@@ -312,9 +376,12 @@ int cpu_run(cpu_state_t *cpu, nexus32_mem_t *mem, uint32_t cycle_limit, uint32_t
 		}
 		else if (op == OP_SH) {
 			uint32_t addr = cpu->r[rs] + (uint32_t)simm;
-			if ((addr & 1) == 0)
+			if (addr & 1) {
+				raise_exception(cpu, mem, CAUSE_ADDR_ALIGN, &pc_next, &cost);
+			} else {
 				mem_write16(mem, addr, (uint16_t)cpu->r[rt]);
-			cost = 3;
+				cost = 3;
+			}
 		}
 		else if (op == OP_S) {
 			if (func == FUNC_ERET) {
@@ -342,7 +409,7 @@ int cpu_run(cpu_state_t *cpu, nexus32_mem_t *mem, uint32_t cycle_limit, uint32_t
 			(void)rt;
 		}
 		else {
-			/* Unknown opcode: treat as NOP */
+			raise_exception(cpu, mem, CAUSE_ILLEGAL, &pc_next, &cost);
 		}
 
 		cpu->pc = pc_next;

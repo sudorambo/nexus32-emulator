@@ -102,7 +102,7 @@ int vulkan_init(int width, int height, const char *title)
 	static const char *const swapchain_ext = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 	float q_prio = 1.0f;
 	VkDeviceQueueCreateInfo qci = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, NULL, 0, 0, 1, &q_prio };
-	VkDeviceCreateInfo dci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, NULL, 0, 1, &qci, 0, NULL, 1, &swapchain_ext };
+	VkDeviceCreateInfo dci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, NULL, 0, 1, &qci, 0, NULL, 1, &swapchain_ext, NULL };
 	if (vkCreateDevice(s_phys, &dci, NULL, &s_device) != VK_SUCCESS) { vkDestroySurfaceKHR(s_instance, s_surface, NULL); vkDestroyInstance(s_instance, NULL); SDL_DestroyWindow(s_window); SDL_Quit(); return -1; }
 	vkGetDeviceQueue(s_device, 0, 0, &s_queue);
 

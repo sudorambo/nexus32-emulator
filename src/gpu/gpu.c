@@ -79,7 +79,7 @@ void gpu_process_command_buffer(nexus32_mem_t *mem, uint32_t cb_addr, uint32_t c
 
 		switch (cmd_type) {
 		case CMD_CLEAR: {
-			if (cmd_size >= 16) {
+			if (cmd_size >= 17) {
 				uint8_t r = base[off + 8], g = base[off + 9], b = base[off + 10], a = base[off + 11];
 				frame_state->clear_r = r / 255.0f;
 				frame_state->clear_g = g / 255.0f;

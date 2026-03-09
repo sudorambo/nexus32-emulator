@@ -4,8 +4,9 @@ Vulkan-based emulator for the NEXUS-32 fantasy game console. Loads `.nxrom` ROMs
 
 ## Build
 
-- **Dependencies**: C17 compiler (GCC/Clang). For windowed mode: Vulkan SDK 1.3+, SDL2 2.28+ (see spec §13.2).
+- **Dependencies**: C17 compiler (GCC/Clang). For windowed mode: Vulkan SDK 1.3+, SDL2 2.28+ (see spec §13.2). The debug overlay requires [ClearUI 1.1.1](../clearui-1.1.1/) (auto-detected by CMake).
 - **Headless**: If Vulkan or SDL2 is not found, CMake builds with `NXEMU_HEADLESS`; the emulator runs one frame and exits (no window).
+- **Compiler warnings**: The build enables `-Wall -Wextra -Wpedantic` by default.
 
 ```bash
 mkdir build && cd build
@@ -26,9 +27,19 @@ nxemu <rom.nxrom>
 
 **Save data**: EEPROM is persisted to `<rom_basename>.sav` on each PRESENT and on exit. The file is loaded at startup if present.
 
-## Debug
+## Debug Overlay
 
-- **F12** (windowed): Dump current CPU state (PC, SR, next instruction disassembly, r2/r3/r29/r30/r31) to stderr.
+- **F12** (windowed): Toggle the ClearUI debug overlay — displays all 32 registers, disassembly at PC, and memory dump, composited over the Vulkan framebuffer with a dark theme.
+- See [docs/clearui-integration.md](docs/clearui-integration.md) for build setup, Vulkan integration details, and how to add widgets.
+
+## CPU Conformance
+
+The emulator implements the full integer ISA per spec section 2.3:
+
+- **Arithmetic**: ADD/ADDU/SUB/SUBU (ADD/SUB trap on signed overflow), MUL/MULH/DIV/DIVU/MOD with correct cycle costs.
+- **Branches**: BEQ/BNE/BLT/BGT/BLE/BGE (2 cycles taken, 1 not-taken).
+- **Load/store**: LB/LBU/LH/LHU/LW/SB/SH/SW — unaligned LW/SW/LH/SH/LHU raise address alignment exceptions per spec.
+- **Unknown opcodes**: Trigger an illegal instruction exception (not silently treated as NOP).
 
 ## Error handling
 
