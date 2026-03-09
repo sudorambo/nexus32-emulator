@@ -4,9 +4,11 @@ project(nexus32-emulator C CXX)
 set(CMAKE_C_STANDARD 17)
 
 # Vulkan and SDL2 required for windowed mode (Phase 4+). If not found, build headless (no window).
+# -DNXEMU_HEADLESS=ON forces headless (e.g. for CI/smoke test).
+option(NXEMU_HEADLESS "Build headless (no window/display)" OFF)
 find_package(Vulkan QUIET)
 find_package(SDL2 QUIET)
-if(NOT Vulkan_FOUND OR NOT SDL2_FOUND)
+if(NXEMU_HEADLESS OR NOT Vulkan_FOUND OR NOT SDL2_FOUND)
   add_compile_definitions(NXEMU_HEADLESS)
 endif()
 
